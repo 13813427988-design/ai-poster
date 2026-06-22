@@ -1,0 +1,34 @@
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Go 编译产物 / 测试
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+backend/backend
+backend/main
+
+# 运行时输出（海报、AI 占位图）
+backend/static/posters/
+backend/static/samples/
+
+# 日志
+*.log
+logs/
+
+# 字体文件 binary（README 里说明用户自己放）
+backend/static/fonts/*.ttf
+backend/static/fonts/*.otf
+
+# Go 工作区文件
+go.work
+go.work.sum
+
+# 依赖锁先保留 go.sum，仅排除临时文件
+vendor/
