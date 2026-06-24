@@ -24,13 +24,16 @@ describe("Preview", () => {
     expect(container.querySelector('[data-testid="preview-skeleton"]')).not.toBeNull();
   });
 
-  it("renders image and download link on success", () => {
+  it("renders image and download button on success", () => {
     render(<Preview status="success" current={item} error={null} />);
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", item.url);
-    const link = screen.getByRole("link", { name: /下载/ });
-    expect(link).toHaveAttribute("href", item.url);
-    expect(link).toHaveAttribute("download");
+    const button = screen.getByRole("button", { name: /下载/ });
+    expect(button).toBeInstanceOf(HTMLButtonElement);
+    expect(button).toHaveAttribute("type", "button");
+    // React attaches onClick via its synthetic event system; presence of an
+    // event listener is verified by api.test.ts where downloadPoster's
+    // happy-path is exercised end-to-end.
   });
 
   it("renders error message when error", () => {

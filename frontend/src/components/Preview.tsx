@@ -1,3 +1,4 @@
+import { downloadPoster } from "../api";
 import type { Status } from "../reducer";
 import type { HistoryItem } from "../types";
 
@@ -36,13 +37,19 @@ export function Preview({ status, current, error }: Props) {
             <div className="font-medium">{current.title}</div>
             <div className="text-xs text-slate-400">{current.prompt}</div>
           </div>
-          <a
-            href={current.url}
-            download
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await downloadPoster(current.url, `${current.title}.png`);
+              } catch (err) {
+                console.error("download failed", err);
+              }
+            }}
             className="inline-block self-start px-3 py-1 text-xs rounded bg-slate-100 hover:bg-slate-200"
           >
             下载海报
-          </a>
+          </button>
         </div>
       )}
 

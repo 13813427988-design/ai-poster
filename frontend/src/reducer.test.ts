@@ -4,8 +4,8 @@ import {
   createInitialState,
   HISTORY_MAX,
   type State,
-  type HistoryItem,
 } from "./reducer";
+import type { HistoryItem } from "./types";
 
 const makeItem = (id: string, ts = 0): HistoryItem => ({
   id,

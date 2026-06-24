@@ -1,10 +1,7 @@
 import { useEffect, useReducer } from "react";
 import { generatePoster } from "./api";
-import {
-  appReducer,
-  createInitialState,
-  type HistoryItem,
-} from "./reducer";
+import { appReducer, createInitialState } from "./reducer";
+import type { HistoryItem } from "./types";
 import { PromptForm } from "./components/PromptForm";
 import { Preview } from "./components/Preview";
 import { History } from "./components/History";

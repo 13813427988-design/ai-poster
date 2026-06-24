@@ -1,7 +1,5 @@
 import type { HistoryItem } from "./types";
 
-export type { HistoryItem };
-
 export const HISTORY_MAX = 50;
 
 export type Status = "idle" | "loading" | "success" | "error";
