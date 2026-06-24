@@ -1,122 +1,92 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useReducer } from "react";
+import { generatePoster } from "./api";
+import {
+  appReducer,
+  createInitialState,
+  type HistoryItem,
+} from "./reducer";
+import { PromptForm } from "./components/PromptForm";
+import { Preview } from "./components/Preview";
+import { History } from "./components/History";
 
-function App() {
-  const [count, setCount] = useState(0)
+const STORAGE_KEY = "ai-poster-history";
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+function loadHistory(): HistoryItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as HistoryItem[]) : [];
+  } catch {
+    return [];
+  }
 }
 
-export default App
+export default function App() {
+  const [state, dispatch] = useReducer(
+    appReducer,
+    undefined,
+    () => createInitialState(loadHistory()),
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history));
+    } catch {
+      // storage full or disabled — ignore
+    }
+  }, [state.history]);
+
+  const handleSubmit = async () => {
+    dispatch({ type: "SUBMIT" });
+    try {
+      const { url } = await generatePoster(state.form);
+      const item: HistoryItem = {
+        id: crypto.randomUUID(),
+        prompt: state.form.prompt,
+        title: state.form.title,
+        url,
+        createdAt: Date.now(),
+      };
+      dispatch({ type: "SUCCESS", item });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      dispatch({ type: "FAILURE", message });
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-6xl mx-auto p-6 space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold text-slate-800">AI 海报生成</h1>
+        </header>
+
+        <div className="grid md:grid-cols-2 gap-6">
+          <PromptForm
+            form={state.form}
+            status={state.status}
+            onChange={(field, value) =>
+              dispatch({ type: "SET_FIELD", field, value })
+            }
+            onPresetClick={(preset) =>
+              dispatch({ type: "APPLY_PRESET", preset })
+            }
+            onSubmit={handleSubmit}
+          />
+          <Preview
+            status={state.status}
+            current={state.current}
+            error={state.error}
+          />
+        </div>
+
+        <History
+          items={state.history}
+          onSelect={(item) => dispatch({ type: "RESTORE", item })}
+          onClear={() => dispatch({ type: "CLEAR_HISTORY" })}
+        />
+      </div>
+    </div>
+  );
+}
