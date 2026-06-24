@@ -34,7 +34,8 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /生成/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole("img")).toHaveAttribute("src", "http://x/p.png");
+      const imgs = screen.getAllByRole("img");
+      expect(imgs.some((i) => i.getAttribute("src") === "http://x/p.png")).toBe(true);
     });
   });
 
