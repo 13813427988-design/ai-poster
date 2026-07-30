@@ -22,8 +22,14 @@ type ImageDownloader struct {
 	localAddr  string
 }
 
+// downloadTimeout 不能按"纯下载"来估:pollinations 这类 endpoint 是在 GET 期间现场跑
+// 模型推理的,图片字节要等出图才开始返回,所以这段超时实际包含了模型推理耗时
+// (实测单次 4.5s~36.2s 都有)。短超时会把慢的那部分请求直接判死,对用户表现为
+// 500 "download bg: context deadline exceeded"。与 ModelProxyAIClient 取同一量级。
+const downloadTimeout = 120 * time.Second
+
 func NewImageDownloader() *ImageDownloader {
-	return &ImageDownloader{client: &http.Client{Timeout: 30 * time.Second}}
+	return &ImageDownloader{client: &http.Client{Timeout: downloadTimeout}}
 }
 
 // WithSelfRewrite 让 Download 把指向 publicURL 的请求改写到 localAddr。

@@ -25,6 +25,10 @@ func TestPollinationsGenerateBuildsURL(t *testing.T) {
 	if u.Scheme != "https" {
 		t.Errorf("scheme = %q, want %q", u.Scheme, "https")
 	}
+	// path 必须落在 /prompt/ 下,换成别的段服务端不认(会 404,图也就取不到)
+	if !strings.HasPrefix(u.Path, "/prompt/") {
+		t.Errorf("decoded path = %q, want prefix %q", u.Path, "/prompt/")
+	}
 	// 中文 prompt 必须转义进 path;url.Parse 解码后应还原
 	if !strings.HasSuffix(u.Path, "日落海边的渔船") {
 		t.Errorf("decoded path = %q, want suffix %q", u.Path, "日落海边的渔船")
@@ -50,6 +54,9 @@ func TestPollinationsGenerateBuildsURL(t *testing.T) {
 }
 
 // 同 prompt 必须拿到不同 seed,否则 pollinations 每次返回同一张图。
+// 这里不只要求"不全相同":seed 必须来自足够大的取值空间,否则"重新生成"仍有
+// 相当概率撞回上一张图,是一种不报错的静默退化。20 次抽取自 1e9 空间,期望碰撞
+// 概率约 2e-7,所以门槛压到 19(留 1 次碰撞余量),低熵 seed 会立刻失败。
 func TestPollinationsGenerateVariesSeed(t *testing.T) {
 	c := NewPollinationsAIClient("")
 
@@ -62,8 +69,11 @@ func TestPollinationsGenerateVariesSeed(t *testing.T) {
 		u, _ := url.Parse(got)
 		seen[u.Query().Get("seed")] = true
 	}
-	if len(seen) < 2 {
-		t.Errorf("got %d distinct seeds across 20 calls, want >= 2", len(seen))
+	if len(seen) < 19 {
+		t.Errorf("got %d distinct seeds across 20 calls, want >= 19; "+
+			"seed must be drawn from a space large enough (~1e9) that repeat "+
+			"generations practically never reuse a seed — a low-entropy seed would "+
+			"silently give users the same poster again", len(seen))
 	}
 }
 

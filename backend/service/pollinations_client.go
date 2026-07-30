@@ -25,6 +25,9 @@ type PollinationsAIClient struct {
 	height  string
 }
 
+// 编译期断言:改 Generate 签名或改名会在这里直接编译失败,而不是等到 main.go 注入时才发现。
+var _ AIClient = (*PollinationsAIClient)(nil)
+
 func NewPollinationsAIClient(size string) *PollinationsAIClient {
 	c := &PollinationsAIClient{baseURL: "https://image.pollinations.ai/prompt/"}
 	c.width, c.height = parseSize(size)

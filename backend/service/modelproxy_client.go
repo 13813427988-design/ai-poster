@@ -30,6 +30,9 @@ type ModelProxyAIClient struct {
 	httpClient *http.Client
 }
 
+// 编译期断言:改 Generate 签名或改名会在这里直接编译失败。
+var _ AIClient = (*ModelProxyAIClient)(nil)
+
 func NewModelProxyAIClient(endpoint, token, model, size, samplesDir, publicURL string) *ModelProxyAIClient {
 	return &ModelProxyAIClient{
 		endpoint:   endpoint,
