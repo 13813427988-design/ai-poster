@@ -47,7 +47,10 @@ func main() {
 	promptSvc := service.NewPromptService()
 	aiClient, err := newAIClient(cfg)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		// 与上面的 "config:" 区分开:cfg.Validate() 已经放行了这个 provider,
+		// 走到这里说明是 ValidProviders 与 newAIClient 没同步的内部接线 bug,
+		// 不是运维的 env 文件写错了,别让人白翻配置。
+		log.Fatalf("provider wiring: %v", err)
 	}
 	log.Printf("ai-poster provider=%s image_size=%q", cfg.AIProvider, cfg.ImageSize)
 	// endpoint 不可达是已知部署风险,启动时打出来便于排查;token 不打。

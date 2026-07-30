@@ -57,10 +57,12 @@ func TestNewAIClientRejectsUnknownProvider(t *testing.T) {
 }
 
 // 每个 Validate 放行的 provider,newAIClient 都必须能建出客户端。
-// 这条把分散在 config.Validate 和 main.newAIClient 两处的 provider 列表绑在一起:
-// 任一处新增/漏掉 provider 都会在这里失败。
+// 遍历 config.ValidProviders（Validate 判定放行用的同一份清单）而不是本地再抄一份,
+// 这样两个方向的漂移都会被抓到:从清单里删掉 provider 会让上面的类型断言测试失败,
+// 往清单里加了 provider 却忘在 newAIClient 里接线,会在这里失败。
+// 抄一份硬编码列表只能防前者——后者(新值根本不在遍历范围内)才是真正会发生的漂移。
 func TestNewAIClientHandlesEveryValidatedProvider(t *testing.T) {
-	for _, provider := range []string{config.ProviderPollinations, config.ProviderModelProxy, config.ProviderMock} {
+	for _, provider := range config.ValidProviders {
 		cfg := &config.Config{
 			AIProvider:      provider,
 			SamplesDir:      t.TempDir(),

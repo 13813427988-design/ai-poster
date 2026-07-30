@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -13,6 +14,12 @@ const (
 	ProviderModelProxy   = "modelproxy"   // 需 token,且 endpoint 需内网可达
 	ProviderMock         = "mock"         // 本地渐变占位图,不出网
 )
+
+// ValidProviders 是 provider 的唯一权威清单:Validate 由它决定放行哪些值,
+// main_test 也遍历它去验证每个放行值都在 newAIClient 里接上了客户端。
+// 只有共用同一份清单,"往清单里加了 provider 但忘了接线"才会在测试里暴露——
+// 各处各写一份硬编码列表时,新增的值根本不会被遍历到。
+var ValidProviders = []string{ProviderPollinations, ProviderModelProxy, ProviderMock}
 
 // Config 服务运行参数。所有字段都可被同名（大写）环境变量覆盖。
 type Config struct {
@@ -52,8 +59,16 @@ func Load() *Config {
 	}
 }
 
+// envOr 读环境变量并 TrimSpace 后返回,首尾空白视为未设置(取 fallback)。
+// 这里统一 trim 而不是在各字段上单独 trim:本结构里所有 env 派生的值——端口、
+// URL、路径、token、模型名、尺寸——首尾空白都没有语义,而 env-file 极易带出
+// 尾随空格或 \r\n（CRLF 文件、`echo` 追加）。留着这些垃圾字符不会在启动时
+// 报错,只会在运行时炸:token 带 \r\n 会被 net/http 以
+// `invalid header field value for "Authorization"` 在发出前拒掉(每请求 100% 失败,
+// 而 /healthz 照样 200),endpoint 带换行会 URL 解析失败,模型名/尺寸带换行会被上游拒。
+// 在入口处 trim 一次,就不必指望每个新字段的作者都记得自己 trim。
 func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return fallback
@@ -70,19 +85,16 @@ func normalizeProvider(v string) string {
 // Validate 检查配置自身一致性。返回非 nil 时调用方应让进程启动失败——
 // 显式报错胜过静默降级:配错时安静跑 mock 会让人误以为在用真模型。
 func (c *Config) Validate() error {
-	switch c.AIProvider {
-	case ProviderPollinations, ProviderMock:
-		return nil
-	case ProviderModelProxy:
-		// 用 TrimSpace 判空:envOr 只把 "" 当未设置,所以 "   " 或带尾换行的
-		// token（env-file 里最常见）会一路带着垃圾凭证建出真客户端,
-		// 变成每请求失败而不是启动即失败。
-		if strings.TrimSpace(c.ModelProxyToken) == "" {
-			return fmt.Errorf("AI_PROVIDER=%s requires MODELPROXY_TOKEN", ProviderModelProxy)
-		}
-		return nil
-	default:
-		return fmt.Errorf("unknown AI_PROVIDER %q, want one of %s/%s/%s",
-			c.AIProvider, ProviderPollinations, ProviderModelProxy, ProviderMock)
+	if !slices.Contains(ValidProviders, c.AIProvider) {
+		return fmt.Errorf("unknown AI_PROVIDER %q, want one of %s",
+			c.AIProvider, strings.Join(ValidProviders, "/"))
 	}
+	// modelproxy 是唯一需要凭证的 provider,缺 token 必须启动即失败。
+	// 这里仍用 TrimSpace 判空:Load() 出来的值已经 trim 过（见 envOr）,
+	// 但 Config 也可能被直接构造(测试、将来的其它入口),纯空白 token
+	// 等于没配,不能让它建出一个每请求都 401 的"真"客户端。
+	if c.AIProvider == ProviderModelProxy && strings.TrimSpace(c.ModelProxyToken) == "" {
+		return fmt.Errorf("AI_PROVIDER=%s requires MODELPROXY_TOKEN", ProviderModelProxy)
+	}
+	return nil
 }
