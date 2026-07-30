@@ -13,6 +13,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	for _, dir := range []string{cfg.PostersDir, cfg.SamplesDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -21,15 +24,17 @@ func main() {
 	}
 
 	promptSvc := service.NewPromptService()
-	// 配了 MODELPROXY_TOKEN 就用真实模型代理生图，否则回退 Mock（渐变占位图）。
 	var aiClient service.AIClient
-	if cfg.ModelProxyToken != "" {
-		aiClient = service.NewModelProxyAIClient(cfg.ModelProxyEndpoint, cfg.ModelProxyToken, cfg.ModelProxyModel, cfg.ImageSize, cfg.SamplesDir, cfg.PublicURL)
-		log.Printf("ai-poster using modelproxy: endpoint=%s, model=%s", cfg.ModelProxyEndpoint, cfg.ModelProxyModel)
-	} else {
+	switch cfg.AIProvider {
+	case config.ProviderPollinations:
+		aiClient = service.NewPollinationsAIClient(cfg.ImageSize)
+	case config.ProviderModelProxy:
+		aiClient = service.NewModelProxyAIClient(cfg.ModelProxyEndpoint, cfg.ModelProxyToken,
+			cfg.ModelProxyModel, cfg.ImageSize, cfg.SamplesDir, cfg.PublicURL)
+	case config.ProviderMock:
 		aiClient = service.NewMockAIClient(cfg.SamplesDir, cfg.PublicURL)
-		log.Printf("ai-poster using mock AI client (set MODELPROXY_TOKEN to enable real model)")
 	}
+	log.Printf("ai-poster provider=%s image_size=%q", cfg.AIProvider, cfg.ImageSize)
 	// 容器内取自己落盘的图走回环，不依赖 hairpin NAT
 	downloader := service.NewImageDownloader().
 		WithSelfRewrite(cfg.PublicURL, "http://127.0.0.1:"+cfg.Port)
