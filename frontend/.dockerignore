@@ -1,0 +1,6 @@
+node_modules
+# dist 在镜像内构建;本地残留的过时产物不该进上下文
+dist
+dist-ssr
+*.local
+.oxlintrc.json

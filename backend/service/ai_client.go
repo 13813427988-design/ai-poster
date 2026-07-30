@@ -28,6 +28,9 @@ type MockAIClient struct {
 	urlPath    string // URL 子路径，固定 /static/samples
 }
 
+// 编译期断言:改 Generate 签名或改名会在这里直接编译失败。
+var _ AIClient = (*MockAIClient)(nil)
+
 func NewMockAIClient(samplesDir, publicURL string) *MockAIClient {
 	return &MockAIClient{
 		samplesDir: samplesDir,

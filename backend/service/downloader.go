@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -14,15 +15,43 @@ import (
 // mock 模式下 URL 也是本地的，但走 HTTP 路径保持流程一致，方便未来切到真模型时无缝。
 type ImageDownloader struct {
 	client *http.Client
+
+	// selfPrefix 非空时,命中该前缀的 URL 会被改写到 localAddr。
+	// 用途:容器内取自己刚落盘的图,不依赖 hairpin NAT 经公网绕回。
+	selfPrefix string
+	localAddr  string
 }
 
+// downloadTimeout 不能按"纯下载"来估:pollinations 这类 endpoint 是在 GET 期间现场跑
+// 模型推理的,图片字节要等出图才开始返回,所以这段超时实际包含了模型推理耗时
+// (实测单次 4.5s~36.2s 都有)。短超时会把慢的那部分请求直接判死,对用户表现为
+// 500 "download bg: context deadline exceeded"。与 ModelProxyAIClient 取同一量级。
+const downloadTimeout = 120 * time.Second
+
 func NewImageDownloader() *ImageDownloader {
-	return &ImageDownloader{client: &http.Client{Timeout: 30 * time.Second}}
+	return &ImageDownloader{client: &http.Client{Timeout: downloadTimeout}}
+}
+
+// WithSelfRewrite 让 Download 把指向 publicURL 的请求改写到 localAddr。
+// publicURL 为空时不启用改写。返回 d 本身,便于链式调用。
+func (d *ImageDownloader) WithSelfRewrite(publicURL, localAddr string) *ImageDownloader {
+	d.selfPrefix = strings.TrimSuffix(publicURL, "/")
+	d.localAddr = strings.TrimSuffix(localAddr, "/")
+	return d
+}
+
+// rewriteSelf 命中自地址前缀则替换为本地地址,否则原样返回。
+func (d *ImageDownloader) rewriteSelf(imageURL string) string {
+	if d.selfPrefix == "" || !strings.HasPrefix(imageURL, d.selfPrefix) {
+		return imageURL
+	}
+	return d.localAddr + strings.TrimPrefix(imageURL, d.selfPrefix)
 }
 
 // Download GET imageURL 写到 destPath。父目录不存在时自动创建。
 func (d *ImageDownloader) Download(ctx context.Context, imageURL, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	reqURL := d.rewriteSelf(imageURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -32,7 +61,7 @@ func (d *ImageDownloader) Download(ctx context.Context, imageURL, destPath strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed, status=%s url=%s", resp.Status, imageURL)
+		return fmt.Errorf("download failed, status=%s url=%s", resp.Status, reqURL)
 	}
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
