@@ -1,0 +1,9 @@
+# 运行时产物,不该进构建上下文(本地已积累 12M)
+static/posters
+static/samples
+
+# 本地构建产物
+backend
+main
+*.test
+*.out
