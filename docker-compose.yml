@@ -1,0 +1,51 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    restart: unless-stopped
+    # 不映射 ports:仅 compose 网络内可达,减少对外暴露面
+    #
+    # 宿主目录的 owner 必须是 10001:10001 —— 镜像里进程以 uid 10001(app)运行,
+    # 而 bind mount 会把宿主的 owner/mode 原样带进容器,把镜像里已经 chown 过的
+    # /app/static/{posters,samples} 整个盖掉。
+    #
+    # 忘了 chown 的表现实测过一遍,值得写清楚,因为它不是"起不来"那么好认:
+    # 目录本身已经存在(compose 的 create_host_path 会建),所以 main.go 启动时的
+    # MkdirAll 直接返回 nil —— 进程正常启动,/healthz 照样 200,healthcheck 通过,
+    # nginx 也就正常起来了。唯一的症状是每次 POST /generate 都 500:
+    #   {"error":"download bg: create dest: open /app/static/posters/xxx_bg.png: permission denied"}
+    # 也就是一个"健康"但干不了正事的栈。(反过来,若把整个 ./data 挂到
+    # /app/static,子目录得在不可写的挂载点里新建,MkdirAll 失败会走 log.Fatalf,
+    # 那时是 crash-loop,加上下面的 depends_on 会表现为 nginx 一直不启动。)
+    #
+    # 首次部署(或换机器)务必先跑:
+    #   mkdir -p data/posters data/samples
+    #   docker run --rm -v "$PWD/data:/data" alpine:3.21 chown -R 10001:10001 /data
+    # (借 docker 自己的 root 来 chown,不需要宿主 sudo;等价于 sudo chown -R 10001:10001 data)
+    volumes:
+      - ./data/posters:/app/static/posters
+      - ./data/samples:/app/static/samples
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  nginx:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    # service_healthy 而不是 service_started:nginx.conf 里 proxy_pass 写的是字面
+    # 主机名 backend,nginx 在读配置时就要把它解析出来(没有 resolver 指令是有意的,
+    # 用变量做 proxy_pass 会关掉 location 前缀替换,/api 的尾斜杠剥离会静默失效)。
+    # backend 还没起来时 nginx 会以 `host not found in upstream "backend"` 直接退出,
+    # 所以必须等到 backend 健康。
+    #
+    # 运维注意:同一原因,nginx 只在启动时解析一次并永久缓存该 IP。单独重建
+    # backend(docker compose up -d backend / restart 后拿到新 IP)会让 nginx 一直
+    # 指向旧地址并返回 502 —— 重建 backend 后要一并 `docker compose restart nginx`。
+    depends_on:
+      backend:
+        condition: service_healthy

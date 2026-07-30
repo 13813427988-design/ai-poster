@@ -6,12 +6,29 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"ai-poster/backend/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// requestTimeout 是单请求的总预算,必须小于 nginx 的 proxy_read_timeout(180s)。
+//
+// 为什么需要它:两个下游各自的超时是独立的上限,串起来会超过 nginx 的容忍度。
+// modelproxy 路径最坏 = 120s 生图(modelproxy_client 的 http.Client.Timeout)
+// + 120s 下载(downloader.downloadTimeout) = 240s > 180s。没有总预算时,
+// 这种请求会由 nginx 先断:前端拿到一个没有信息量的 504,而后端还在跑,
+// 最后把一张没人会取的海报写进 posters/。给足 10s 余量(合成+落盘实测 <1s)
+// 收在 170s,让超时由后端自己判定 —— 前端拿到的是
+// 500 "download bg: context deadline exceeded" 这种能直接定位到阶段的错误,
+// nginx 的 180s 退化成真正的兜底。
+//
+// 这个数字与 nginx.conf 的 proxy_read_timeout 是一对约束,改一个要同时看另一个。
+// pollinations 路径本身没有触碰这个上限的风险:它的 Generate 只拼 URL 不出网,
+// 全部耗时都在那一次 120s 的 GET 里(实测 4.5s~36.2s)。
+const requestTimeout = 170 * time.Second
 
 type GenerateRequest struct {
 	Prompt string `json:"prompt" binding:"required"`
@@ -62,8 +79,7 @@ func (h *GenerateHandler) Generate(c *gin.Context) {
 		return
 	}
 
-	// 单请求 60s 兜底超时；下游各自还可有更短超时
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	ctx, cancel := context.WithTimeout(c.Request.Context(), requestTimeout)
 	defer cancel()
 
 	fullPrompt := h.promptSvc.BuildPrompt(req.Prompt)
