@@ -13,6 +13,13 @@ type Config struct {
 	PostersDir string // 海报输出目录
 	SamplesDir string // mock AI 模式下的占位图目录
 	FontPath   string // 标题用的 TTF 字体（缺失时合成不画文字）
+
+	// 文生图模型代理（OpenAI 兼容 /v1/images/generations）。
+	// ModelProxyToken 为空时回退到 Mock 生图。
+	ModelProxyEndpoint string // 代理地址
+	ModelProxyToken    string // Bearer token
+	ModelProxyModel    string // 文生图模型
+	ImageSize          string // 生成尺寸(可选)，如 1024x1536
 }
 
 func Load() *Config {
@@ -26,6 +33,11 @@ func Load() *Config {
 		PostersDir: filepath.Join(staticDir, "posters"),
 		SamplesDir: filepath.Join(staticDir, "samples"),
 		FontPath:   envOr("FONT_PATH", filepath.Join(staticDir, "fonts", "default.ttf")),
+
+		ModelProxyEndpoint: envOr("MODELPROXY_ENDPOINT", "https://models-proxy.stepfun-inc.com/v1/images/generations"),
+		ModelProxyToken:    envOr("MODELPROXY_TOKEN", ""),
+		ModelProxyModel:    envOr("MODELPROXY_MODEL", "doubao-seedream-4.0"),
+		ImageSize:          envOr("IMAGE_SIZE", ""),
 	}
 }
 

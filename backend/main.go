@@ -21,7 +21,15 @@ func main() {
 	}
 
 	promptSvc := service.NewPromptService()
-	aiClient := service.NewMockAIClient(cfg.SamplesDir, cfg.PublicURL)
+	// 配了 MODELPROXY_TOKEN 就用真实模型代理生图，否则回退 Mock（渐变占位图）。
+	var aiClient service.AIClient
+	if cfg.ModelProxyToken != "" {
+		aiClient = service.NewModelProxyAIClient(cfg.ModelProxyEndpoint, cfg.ModelProxyToken, cfg.ModelProxyModel, cfg.ImageSize, cfg.SamplesDir, cfg.PublicURL)
+		log.Printf("ai-poster using modelproxy: endpoint=%s, model=%s", cfg.ModelProxyEndpoint, cfg.ModelProxyModel)
+	} else {
+		aiClient = service.NewMockAIClient(cfg.SamplesDir, cfg.PublicURL)
+		log.Printf("ai-poster using mock AI client (set MODELPROXY_TOKEN to enable real model)")
+	}
 	downloader := service.NewImageDownloader()
 	composer := service.NewPosterComposer(cfg.FontPath)
 
