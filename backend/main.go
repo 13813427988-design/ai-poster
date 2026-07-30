@@ -30,7 +30,9 @@ func main() {
 		aiClient = service.NewMockAIClient(cfg.SamplesDir, cfg.PublicURL)
 		log.Printf("ai-poster using mock AI client (set MODELPROXY_TOKEN to enable real model)")
 	}
-	downloader := service.NewImageDownloader()
+	// 容器内取自己落盘的图走回环，不依赖 hairpin NAT
+	downloader := service.NewImageDownloader().
+		WithSelfRewrite(cfg.PublicURL, "http://127.0.0.1:"+cfg.Port)
 	composer := service.NewPosterComposer(cfg.FontPath)
 
 	gh := handler.NewGenerateHandler(promptSvc, aiClient, downloader, composer, cfg.PublicURL, cfg.PostersDir)
