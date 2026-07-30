@@ -22,9 +22,18 @@ services:
     #   mkdir -p data/posters data/samples
     #   docker run --rm -v "$PWD/data:/data" alpine:3.21 chown -R 10001:10001 /data
     # (借 docker 自己的 root 来 chown,不需要宿主 sudo;等价于 sudo chown -R 10001:10001 data)
+    # 忘了也不至于查半天:main.go 启动时会对这两个目录做一次真实写入探测,
+    # 写不进就 log.Fatalf 打出上面这条命令并 crash-loop。
     volumes:
       - ./data/posters:/app/static/posters
       - ./data/samples:/app/static/samples
+    # 1.9G 的小机器上 json-file 默认无上限,而 gin 每个请求都记一行
+    # (包括前端每次刷新带来的一串 /static 命中),不封顶迟早把磁盘写满。
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 10s
@@ -37,11 +46,23 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-    # service_healthy 而不是 service_started:nginx.conf 里 proxy_pass 写的是字面
-    # 主机名 backend,nginx 在读配置时就要把它解析出来(没有 resolver 指令是有意的,
-    # 用变量做 proxy_pass 会关掉 location 前缀替换,/api 的尾斜杠剥离会静默失效)。
-    # backend 还没起来时 nginx 会以 `host not found in upstream "backend"` 直接退出,
-    # 所以必须等到 backend 健康。
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    # 下面的 depends_on 只在 `docker compose up` 这条路径上生效:nginx.conf 里
+    # proxy_pass 写的是字面主机名 backend,nginx 在读配置时就要把它解析出来
+    # (没有 resolver 指令是有意的,用变量做 proxy_pass 会关掉 location 前缀替换,
+    # /api 的尾斜杠剥离会静默失效)。backend 还没起来时 nginx 会以
+    # `host not found in upstream "backend"` 直接退出,所以 up 时必须等它健康。
+    #
+    # 但仅此而已 —— condition: service_healthy 不是持续保障:
+    # VPS 重启或 systemctl restart docker 之后,是 restart: unless-stopped 把两个
+    # 容器拉起来的,启动顺序不确定且不会重新判定 healthy。nginx 若先起,就会因
+    # 上面那个解析失败硬退出,然后按 restart 策略反复重启,直到 backend 起来、
+    # DNS 能解析为止。最终自愈,但中间会 flap 若干秒(观察到的是几次重启),
+    # 期间对外 502/连不上。看到重启计数涨了不用慌,这是已知行为,不是故障。
     #
     # 运维注意:同一原因,nginx 只在启动时解析一次并永久缓存该 IP。单独重建
     # backend(docker compose up -d backend / restart 后拿到新 IP)会让 nginx 一直

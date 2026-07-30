@@ -32,6 +32,28 @@ func newAIClient(cfg *config.Config) (service.AIClient, error) {
 	}
 }
 
+// probeWritable 真的往 dir 里写一个字节再删掉,用来确认目录可写。
+// MkdirAll 成功不代表能写:目录已存在时它直接返回 nil,完全不碰权限。
+// compose 的 bind mount 正好落在这个盲区——create_host_path 用宿主 uid 建好
+// ./data/{posters,samples},挂进容器后盖掉镜像里已 chown 过的目录,
+// 而进程以 uid 10001 运行,于是目录存在、启动正常、/healthz 200、healthcheck
+// 通过,只有每次 POST /generate 在 downloader 里 permission denied。
+// 所以必须显式写一次:把这种"健康但干不了正事"的静默错配变成启动即崩。
+func probeWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".write-probe-*")
+	if err != nil {
+		return err
+	}
+	// 无论后面成不成,别把探针文件留在海报目录里(它会被 /static 列出去)。
+	defer os.Remove(f.Name())
+	// 只 Create 不 Write 不足以覆盖只读挂载等"能建 inode 但写不进"的情况。
+	if _, err := f.Write([]byte{0}); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 func main() {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
@@ -41,6 +63,18 @@ func main() {
 	for _, dir := range []string{cfg.PostersDir, cfg.SamplesDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	// 目录建好 ≠ 能写,见 probeWritable 的注释。写不了就在这里响亮地挂掉,
+	// 让运维看到 crash-loop 而不是一个通过 healthcheck 却每次生成都 500 的栈。
+	for _, dir := range []string{cfg.PostersDir, cfg.SamplesDir} {
+		if err := probeWritable(dir); err != nil {
+			log.Fatalf("目录不可写 %s: %v\n"+
+				"最可能的原因:该目录是 compose 的 bind mount(./data/...),owner 是宿主 uid,"+
+				"而容器内进程以 uid 10001(app)运行,没有写权限。\n"+
+				"修复(在 docker-compose.yml 所在目录执行):\n"+
+				"  docker run --rm -v \"$PWD/data:/data\" alpine:3.21 chown -R 10001:10001 /data",
+				dir, err)
 		}
 	}
 

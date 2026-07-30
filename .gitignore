@@ -33,8 +33,13 @@ go.work.sum
 # 依赖锁先保留 go.sum，仅排除临时文件
 vendor/
 
-# 环境变量(含凭证),只存在服务器本地
-.env
+# 环境变量(含凭证),只存在服务器本地。
+# 用 .env* 而不是 .env:.env.local / .env.production 这类同样含凭证,
+# 逐个列举总会漏。再把模板反选回来——.env.example 必须留在版本库里。
+.env*
+!.env.example
 
-# compose bind mount 的运行时数据
-data/
+# compose bind mount 的运行时数据。
+# 前导 / 把它锚定在仓库根:不加的话这条会匹配任意层级的 data/,
+# 将来加个 frontend/src/data/ 会被静默忽略掉。
+/data/
