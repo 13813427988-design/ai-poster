@@ -6,12 +6,12 @@
 
 把 ai-poster(Go+Gin backend + React/Vite frontend)部署到一台只装了 Docker 的
 x86_64 服务器上,通过 `http://<服务器IP>` 访问完整应用,后端接真实文生图模型
-(modelproxy)。
+(pollinations)。
 
 ## 约束与前提
 
 - 服务器:x86_64 / amd64,已装 Docker(含 `docker compose`),能访问 GitHub 与
-  `models-proxy.stepfun-inc.com`。
+  `image.pollinations.ai`(已在目标服务器实测:`code=200`,2.9s)。
 - 访问方式:裸 IP + 80 端口,不配域名、不配 HTTPS。
 - 代码分发:服务器上 `git clone`,跑 `main` 分支。
 - 海报持久化:生成结果落宿主目录,容器重建后不丢。
@@ -62,14 +62,55 @@ compose 里 backend 服务不写 `ports`,只有 nginx 映射 `80:80`。后端 80
 
 ### proxy_read_timeout 必须放大
 
-文生图慢。后端给 modelproxy 留了 120s 超时(`modelproxy_client.go` 的
-`http.Client{Timeout: 120s}`),而 nginx `proxy_read_timeout` 默认 60s。不改的话真实
-生图会在 nginx 层先断,前端看到 504 而后端仍在正常执行 —— 症状酷似应用 bug。设为
-`180s`。
+文生图慢。pollinations 实测 3~6s,但 `modelproxy` 路径给了 120s 超时
+(`modelproxy_client.go` 的 `http.Client{Timeout: 120s}`),而 nginx
+`proxy_read_timeout` 默认 60s。不改的话慢请求会在 nginx 层先断,前端看到 504 而后端
+仍在正常执行 —— 症状酷似应用 bug。设为 `180s`。
 
 ### ca-certificates 必须装
 
-后端要 HTTPS 调 `models-proxy.stepfun-inc.com`。裸 alpine 无根证书,会直接 x509 失败。
+后端要 HTTPS 调 `image.pollinations.ai`。裸 alpine 无根证书,会直接 x509 失败。
+
+## 生图 provider
+
+保留两个实现,用 `AI_PROVIDER` 环境变量选择,默认 `pollinations`:
+
+| 值 | 实现 | 说明 |
+|---|---|---|
+| `pollinations` | `PollinationsAIClient`(新增) | 默认。无需 token |
+| `modelproxy` | `ModelProxyAIClient`(已有) | 需 `MODELPROXY_TOKEN`,且需内网可达 |
+| `mock` | `MockAIClient`(已有) | 渐变占位图,不出网 |
+
+`modelproxy` 保留但不作默认:`models-proxy.stepfun-inc.com` 解析到 `10.148.x.x`
+私有地址,公网服务器路由不到。本地开发环境可达,故保留实现。
+
+选择逻辑改为显式 switch,替代当前 `main.go` 里"`MODELPROXY_TOKEN` 非空则用真模型、
+否则静默回退 mock"的隐式判断。显式配置的好处:配错时启动即报错,而不是安静地跑 mock
+让人误以为在用真模型。
+
+### PollinationsAIClient
+
+`GET https://image.pollinations.ai/prompt/{urlencode(prompt)}?width=&height=&nologo=true&seed=`
+
+实测结论(均已验证,非推断):
+
+- 中文 prompt 直接生效,无需翻译;`BuildPrompt` 产出的 405 字符转义 URL 正常工作,
+  产图为扁平插画风竖版、天空大片留白、无文字 —— 正合海报底图需要。
+- 请求 `width=1024&height=1536` 实返 **627×940**:匿名调用有分辨率上限,服务端等比
+  缩小。做海报够用,但拿不到高清原图。`IMAGE_SIZE` 仍按 `1024x1536` 格式填(与
+  modelproxy 共用同一配置项),由 client 拆成 `width` / `height` 两个查询参数;拆解
+  失败或为空时走 pollinations 默认尺寸。
+- 返回 **JPEG**(非 PNG)。`poster.go` 已 `import _ "image/jpeg"`,合成无需改动。
+- 同 prompt + 同 seed 返回**完全相同**的图(两次请求 md5 一致)。服务端按 prompt 缓存。
+
+因此每次请求注入随机 seed,使同一描述可反复生成不同海报(符合"重新生成"按钮的预期)。
+随机源用 `math/rand`,不需要密码学强度。
+
+**不做静默降级**:调用失败时返回明确错误,不偷偷切 mock。静默降级会让"接口挂了"和
+"图不好看"两种情况无法区分。
+
+**无 SLA 提醒**:这是免费匿名服务,可能限流或变更。demo 足够;若转长期生产使用需换付费
+接口。client 设 60s 超时。
 
 ## 组件
 
@@ -130,13 +171,20 @@ location / {
 `.env` 不进 git(追加到 `.gitignore`),提交一份 `.env.example` 作模板:
 
 ```
+# 必填:浏览器可达的地址,决定返回给前端的海报 URL
 PUBLIC_URL=http://<服务器IP>
-MODELPROXY_TOKEN=<token>
+
+# pollinations(默认,无需 token) | modelproxy(需内网) | mock
+AI_PROVIDER=pollinations
+IMAGE_SIZE=1024x1536
+
+# 仅 AI_PROVIDER=modelproxy 时需要
+MODELPROXY_TOKEN=
 MODELPROXY_MODEL=doubao-seedream-4.0
-IMAGE_SIZE=
 ```
 
-token 只存在服务器的 `.env`,不进镜像、不进 git。
+默认配置下**唯一必填项是 `PUBLIC_URL`** —— pollinations 不需要凭证。若改用
+`modelproxy`,token 只存在服务器的 `.env`,不进镜像、不进 git。
 
 ### .dockerignore
 
@@ -149,10 +197,16 @@ token 只存在服务器的 `.env`,不进镜像、不进 git。
 
 `service/downloader.go`。
 
-问题:`modelproxy_client.go` 在代理只返回 `b64_json`(无 `url`)时,把图落盘后返回
-`PUBLIC_URL/static/samples/...`,接着 `ImageDownloader` 用 HTTP GET 这个地址 ——
-容器需要经自己的公网 IP 绕回自身。许多云环境 hairpin NAT 不通,此处会失败。豆包
-seedream 通常直接返回 `url`,不一定触发,但触发后排查成本高。
+问题:`MockAIClient` 与 `ModelProxyAIClient`(代理只返回 `b64_json` 时)都把图落盘后
+返回 `PUBLIC_URL/static/samples/...`,接着 `ImageDownloader` 用 HTTP GET 这个地址 ——
+容器需要经自己的公网 IP 绕回自身。许多云环境 hairpin NAT 不通,此处会失败。
+
+注意这**不只影响 modelproxy**:`AI_PROVIDER=mock` 在服务器上同样会踩到,因为 mock 也
+走 `PUBLIC_URL` 拼 URL 再 HTTP 取回。所以哪怕只想用 mock 验证部署链路,这个修复也是
+必需的。
+
+`PollinationsAIClient` 不受影响:它返回的是 pollinations 自己的图片 URL(该 endpoint
+直接响应图片字节),`downloader` 直接取外部地址,不经过本服务。
 
 修复:给 `ImageDownloader` 加可选的自地址改写。`Download` 时若目标 URL 前缀命中
 `PUBLIC_URL`,改写为 `http://127.0.0.1:<PORT>` 再发请求,不依赖 hairpin。
@@ -161,15 +215,15 @@ seedream 通常直接返回 `url`,不一定触发,但触发后排查成本高。
 
 - `publicURL=http://1.2.3.4`、URL `http://1.2.3.4/static/samples/a.png` → 实际请求
   打到本地回环。
-- 外部 URL(如模型 CDN 地址)原样透传,不改写。
+- 外部 URL(如 `https://image.pollinations.ai/...`)原样透传,不改写。
 
 ## 前置工作
 
 两项在部署前必须完成,否则方案跑不通:
 
 1. **提交 modelproxy 实现**。`backend/service/modelproxy_client.go` 当前 untracked,
-   `config/config.go`、`main.go` 的改动未提交 —— 这三者构成接真模型的全部实现。
-   服务器 clone 拿不到,只会静默回退 mock。单独提一个 commit。
+   `config/config.go`、`main.go` 的改动未提交。服务器 clone 拿不到。单独提一个 commit,
+   与后续 pollinations / 部署改动分开。
 2. **合并到 main**。前端全部实现只在 `feat/frontend` 分支;`main` 落后 10 个 commit
    且有 2 个未 push。合并 `feat/frontend` → `main` 并 push,服务器跑 `main`。
 
@@ -177,7 +231,7 @@ seedream 通常直接返回 `url`,不一定触发,但触发后排查成本高。
 
 ```bash
 git clone https://github.com/13813427988-design/ai-poster.git && cd ai-poster
-cp .env.example .env && vi .env      # 填 IP 和 token
+cp .env.example .env && vi .env      # 至少填 PUBLIC_URL
 mkdir -p data/posters data/samples
 docker compose up -d --build
 ```
@@ -193,11 +247,13 @@ docker compose up -d --build
 3. `curl -X POST http://<IP>/api/generate -H 'Content-Type: application/json' -d
    '{"prompt":"日落海边的渔船","title":"夏日海报"}'` → 返回 URL
 4. `curl -I <返回的URL>` → 200;`docker compose logs backend` 含
-   `using modelproxy`(证明真模型生效,而非静默回退 mock)
+   `provider=pollinations`(证明用的是真模型,而非 mock)
 5. 下载海报**打开查看**:标题文字是否画上 → 验证字体
 6. 浏览器访问 `http://<IP>`,走完整生成流程并点击下载按钮
+7. 同一 prompt 连发两次,确认两张海报**不同** → 验证随机 seed 生效
 
-第 5、6 步不可省略。字体解析失败与跨域下载都属于"日志干净但结果错误"的失败模式。
+第 5、6、7 步不可省略。字体解析失败、跨域下载、seed 未生效都属于"日志干净但结果错误"
+的失败模式。
 
 ## 明确不做(YAGNI)
 
