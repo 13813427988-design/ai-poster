@@ -30,12 +30,26 @@ curl -X POST http://localhost:8080/generate \
 
 ## 字体
 
-合成标题需要 TTF 字体，放到 `static/fonts/default.ttf`。建议：
+> Docker 镜像已经装好 `font-wqy-zenhei` 并把 `FONT_PATH` 指向它，本节只影响**不用 Docker、直接 `go run .`** 的场景。
 
-- [思源黑体](https://github.com/adobe-fonts/source-han-sans)
-- [文泉驿微米黑](http://wenq.org/wqy2/)
+合成标题需要字体，默认从 `static/fonts/default.ttf` 读（可用 `FONT_PATH` 指到别处）。
 
-字体缺失时合成会自动跳过文字，只输出 AI 生成的背景图（不会报错）。
+**硬约束：字体必须是 glyf 轮廓，不能是 CFF/OTTO 轮廓。** 本项目用
+`github.com/golang/freetype`，它的 `truetype.Parse` 只解析 glyf；遇到 CFF/OTTO
+会直接报 `bad TTF version`。注意这个区别在**轮廓格式**，不在文件后缀——`.ttc`
+字体集合是可以的（镜像里用的 `wqy-zenhei.ttc` 就是 glyf，freetype 会取集合中第一个字体）。
+
+推荐（都是 glyf，实测可用）：
+
+- [文泉驿正黑 / 微米黑](http://wenq.org/wqy2/)（Debian/Ubuntu: `fonts-wqy-zenhei`，Alpine: `font-wqy-zenhei`）
+
+**不要用**（CFF/OTTO 轮廓，一定 parse 失败）：
+
+- 思源黑体 / Source Han Sans
+- Noto Sans CJK（`NotoSansCJK-Regular.ttc` 同样是 OTTO）
+
+⚠️ 字体加载失败或缺失时，PosterComposer 只打一行日志就**跳过标题文字**，接口照样
+返回 200 和一张图——所以症状是"海报没标题但没有任何报错"。换字体后记得确认标题真的画上了。
 
 ## 配置（环境变量）
 

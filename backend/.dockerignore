@@ -2,8 +2,22 @@
 static/posters
 static/samples
 
-# 本地构建产物
+# 字体:README 让开发者自己往这儿放 ttf/ttc,动辄 20M+,是上下文膨胀的最大来源。
+# 镜像里的字体来自 apk 的 font-wqy-zenhei,不依赖这个目录。
+static/fonts/
+
+# 本地构建产物。这里必须 **/ 前缀:filepath.Match 的 * 不跨 /,
+# 裸 *.test 只匹配上下文根,漏掉 go test -c 在子包里留下的 service/service.test。
 backend
 main
-*.test
-*.out
+**/*.test
+**/*.out
+
+# 本地环境变量文件,绝不该进镜像
+.env*
+
+# 日志 / 编辑器 / 系统垃圾
+*.log
+.DS_Store
+.idea/
+.vscode/
