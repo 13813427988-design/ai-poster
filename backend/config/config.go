@@ -74,7 +74,10 @@ func (c *Config) Validate() error {
 	case ProviderPollinations, ProviderMock:
 		return nil
 	case ProviderModelProxy:
-		if c.ModelProxyToken == "" {
+		// 用 TrimSpace 判空:envOr 只把 "" 当未设置,所以 "   " 或带尾换行的
+		// token（env-file 里最常见）会一路带着垃圾凭证建出真客户端,
+		// 变成每请求失败而不是启动即失败。
+		if strings.TrimSpace(c.ModelProxyToken) == "" {
 			return fmt.Errorf("AI_PROVIDER=%s requires MODELPROXY_TOKEN", ProviderModelProxy)
 		}
 		return nil
