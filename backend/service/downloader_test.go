@@ -70,3 +70,45 @@ func TestDownloadWithoutRewriteWorks(t *testing.T) {
 		t.Fatalf("Download() error = %v, want nil", err)
 	}
 }
+
+// publicURL 显式传空时必须彻底关闭改写(契约写在 WithSelfRewrite 注释里)。
+// 与 TestDownloadWithoutRewriteWorks 不同:这里调用了 WithSelfRewrite,只是前缀为空。
+func TestDownloadWithEmptyPublicURLDisablesRewrite(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.Write([]byte("not-rewritten"))
+	}))
+	defer srv.Close()
+
+	// 127.0.0.1:9 是 discard 端口:若误改写,请求打不到测试服务器
+	d := NewImageDownloader().WithSelfRewrite("", "http://127.0.0.1:9")
+
+	dest := filepath.Join(t.TempDir(), "out.png")
+	if err := d.Download(context.Background(), srv.URL+"/img.jpg", dest); err != nil {
+		t.Fatalf("Download() error = %v, want nil", err)
+	}
+	if !hit {
+		t.Error("external server was not hit; empty publicURL should disable rewriting")
+	}
+}
+
+// PUBLIC_URL 允许带尾斜杠,WithSelfRewrite 会 TrimSuffix,改写后路径不能出现 "//"。
+func TestDownloadRewriteTrimsTrailingSlashInPublicURL(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte("fake-image-bytes"))
+	}))
+	defer srv.Close()
+
+	d := NewImageDownloader().WithSelfRewrite("http://1.2.3.4/", "http://"+srv.Listener.Addr().String())
+
+	dest := filepath.Join(t.TempDir(), "out.png")
+	if err := d.Download(context.Background(), "http://1.2.3.4/static/samples/a.png", dest); err != nil {
+		t.Fatalf("Download() error = %v, want nil", err)
+	}
+	if gotPath != "/static/samples/a.png" {
+		t.Errorf("request path = %q, want %q", gotPath, "/static/samples/a.png")
+	}
+}
