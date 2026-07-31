@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from "react";
 import { generatePoster } from "./api";
 import { appReducer, createInitialState } from "./reducer";
+import { newId } from "./id";
 import type { HistoryItem } from "./types";
 import { PromptForm } from "./components/PromptForm";
 import { Preview } from "./components/Preview";
@@ -39,7 +40,7 @@ export default function App() {
     try {
       const { url } = await generatePoster(state.form);
       const item: HistoryItem = {
-        id: crypto.randomUUID(),
+        id: newId(),
         prompt: state.form.prompt,
         title: state.form.title,
         url,

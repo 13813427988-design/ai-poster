@@ -9,7 +9,6 @@ describe("App", () => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
     localStorage.clear();
-    vi.spyOn(crypto, "randomUUID").mockReturnValue("test-uuid" as any);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
