@@ -27,8 +27,13 @@ docker compose up -d --build
 ```bash
 docker compose ps            # 两个容器都是 running,backend 是 healthy
 curl -sf http://localhost/   # 前端 200
-docker compose logs backend | tail -20
+docker compose logs backend | grep -E "provider|font|listening"
 ```
+
+最后一条**别写成 `| tail -20`**:healthcheck 每 10s 打一行 `GET "/healthz"`,
+跑了 200 秒之后 tail 窗口里就只剩 healthz 噪音,`provider=` 和 `listening on` 早被顶出去了 ——
+自检看着"没有那两行",实际只是被冲掉了。用 `grep` 按关键字捞,任何运行时长都成立。
+（泛用排查还是 `docker compose logs backend --tail 50`。）
 
 ### 为什么必须 chown 10001
 
@@ -42,6 +47,30 @@ healthcheck 也是 healthy —— 只是每次 `POST /generate` 都失败在 `pe
 所以启动时加了一次真实写入探测:写不进就直接 `log.Fatalf` 并 crash-loop。
 **如果 backend 启动时报"目录不可写",就是漏了这一步,跑上面那条 `docker run ... chown` 即可。**
 它借的是 docker 自己的 root,宿主不需要 sudo。
+
+### 起不来:80 端口被占用,或机器上已有一套旧部署
+
+`up -d` 报 `Error starting userland proxy: listen tcp4 0.0.0.0:80: bind: address already in use`
+时,先查是谁占着 80:
+
+```bash
+sudo ss -ltnp | grep :80          # 看进程名/PID(不加 sudo 只能看到在听,看不到是谁)
+docker ps --filter publish=80     # 如果是容器,这条直接给出容器名
+docker compose ls                 # 本机所有 compose 项目及其 compose 文件路径
+```
+
+如果占用者是**同一个项目的旧部署**(比如上次装在别的目录),必须**回到它自己的目录**去停:
+
+```bash
+cd /path/to/旧部署目录 && docker compose down
+```
+
+`docker compose down` 是按 **project** 生效的,而 project 名默认取**所在目录名**。
+在新目录里执行 `down` 停的是新 project,旧那套照样占着 80 —— 会表现成"我明明 down 过了还是端口冲突"。
+`docker compose ls` 输出里的 CONFIG FILES 一列就是各 project 的目录,照着 `cd` 过去即可。
+
+占用者不是 docker(比如宿主自带的 nginx/apache)就停掉它,或者改 compose 里 nginx 的对外端口 ——
+**改了端口记得同步改 `.env` 里的 `PUBLIC_URL`**(见下文)。
 
 ## 更新
 
@@ -166,13 +195,30 @@ docker compose logs --tail=100 nginx
 | 前端能开但生成报错 | `docker compose logs backend`,错误信息带阶段(生图 / 下载 / 合成) |
 | 同一描述总出同一张图 | 已由每请求随机 seed 规避;若仍复现,确认不是 `AI_PROVIDER=mock` |
 | backend 一直 unhealthy | `docker compose logs backend`;大概率是 `config:` 校验失败(比如 `modelproxy` 缺 token) |
+| `up -d` 报 `address already in use`(80) | 端口被别的进程或旧部署占着,见上文"起不来:80 端口被占用";注意旧部署要**在它自己的目录里** `docker compose down` |
+| 外部监控探活报服务 down,但浏览器正常 | 探针用了 **HEAD**。后端只注册了 `GET /healthz`,`HEAD /healthz` 返回 **404**。把监控改成 GET 即可(compose 自带的 healthcheck 用的是 wget GET,不受影响) |
+| 自检看不到 `provider=` / `listening` 那两行 | 别用 `logs backend \| tail -20`,healthz 每 10s 一行会把它们顶出窗口;用 `docker compose logs backend \| grep -E "provider\|font\|listening"` |
 
 ## 已知限制
 
 - **pollinations 无 SLA**。免费匿名服务,可能限流或抖动。匿名调用还有分辨率上限:
   请求 `1024x1536` 实返约 627x940。相同 prompt + seed 会返回字节完全相同的图,
   所以每次请求都注入了随机 seed。
-- **海报不自动清理**。`data/posters` 会持续增长,没有回收机制。在意磁盘就加个 cron,例如
-  `find /opt/ai-poster/data/posters -type f -mtime +7 -delete`。
+- **海报不自动清理**。`data/posters` 会持续增长,没有回收机制。在意磁盘就加个 cron:
+
+  ```cron
+  30 4 * * * docker run --rm -v /opt/ai-poster/data:/data alpine:3.21 find /data/posters -type f -mtime +7 -delete
+  ```
+
+  (`-v` 用绝对路径,cron 里没有可用的 `$PWD`;把 `/opt/ai-poster` 换成你实际的 compose 目录。)
+
+  **别"简化"成宿主直接 `find /opt/ai-poster/data/posters -mtime +7 -delete`** —— 那条跑不通。
+  上文要求把 `data/` chown 给 uid 10001(容器内的用户),宿主用户(通常 uid 1000)于是对这个目录
+  没有写权限,unlink 不掉里面的文件。恶心的是它**今天还静默成功**:目录里暂时没有超过 7 天的文件,
+  find 无事可做,退出码 0,看着一切正常。等海报真的老过 7 天,才开始每个文件报一行
+  `Permission denied` 到没人看的 cron 日志里,而磁盘继续涨 —— 正是本文反复警告的
+  "看着没问题、其实啥也没干"那一类。
+  借 docker 的 root 是本文档一贯的做法(见上面的 chown 那步),宿主不需要 sudo。
+  操作者更习惯 sudo 的话,`sudo find /opt/ai-poster/data/posters -type f -mtime +7 -delete` 同样可行。
 - **仅 HTTP,无 TLS**。要 HTTPS 得在前面再加一层终止(或改 nginx.conf 挂证书)。
 - 部署机 1.9G 内存,构建能跑(峰值约 500MB),但首次拉基础镜像慢。
